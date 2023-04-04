@@ -2,7 +2,6 @@ from fastapi import FastAPI, Depends, Request
 from fastapi.responses import FileResponse
 from tempfile import TemporaryDirectory
 import yt_dlp
-import uvicorn
 import logging
 import time
 import uuid
