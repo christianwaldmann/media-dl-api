@@ -1,7 +1,7 @@
 .PHONY: run deploy
 
 run:
-	uvicorn main:app --reload
+	uvicorn app.main:app --reload
 
 deploy:
 	docker-compose up --build
