@@ -1,10 +1,13 @@
-from fastapi import FastAPI, Depends, Request
+from fastapi import FastAPI, Depends, Request, HTTPException
 from fastapi.responses import FileResponse
 from tempfile import TemporaryDirectory
 import yt_dlp
 import logging
 import time
 import uuid
+from app.DownloadLink import DownloadLink
+from app.Video import Video
+from app.download import download, get_download_url
 
 
 logger = logging.getLogger(__name__)
@@ -52,8 +55,8 @@ async def get_temp_dir():
         tempdir.cleanup()
 
 
-@app.get("/download/audio/{video_url:path}", summary="download audio from a youtube video")
-async def download_audio(video_url: str, request: Request, tempdirname: str = Depends(get_temp_dir)) -> FileResponse:
+@app.post("/download/audio/", summary="download audio from a youtube video")
+async def download_audio(video: Video, request: Request, tempdirname: str = Depends(get_temp_dir)) -> FileResponse:
     """
     Download audio from a youtube video.
 
@@ -79,11 +82,11 @@ async def download_audio(video_url: str, request: Request, tempdirname: str = De
             }
         ],
     }
-    return _download_and_send_to_client(video_url, tempdirname, ydl_opts, fileext="mp3")
+    return _download_and_send_to_client(video.url, tempdirname, ydl_opts, fileext="mp3")
 
 
-@app.get("/download/video/{video_url:path}", summary="download youtube video")
-async def download_video(video_url: str, request: Request, tempdirname: str = Depends(get_temp_dir)) -> FileResponse:
+@app.post("/download/video/", summary="download youtube video")
+async def download_video(video: Video, request: Request, tempdirname: str = Depends(get_temp_dir)) -> FileResponse:
     """
     Download youtube video.
 
@@ -96,16 +99,15 @@ async def download_video(video_url: str, request: Request, tempdirname: str = De
         "noplaylist": True,
         "prefer_ffmpeg": True,
     }
-    return _download_and_send_to_client(video_url, tempdirname, ydl_opts)
+    return _download_and_send_to_client(video.url, tempdirname, ydl_opts)
 
 
 def _download_and_send_to_client(video_url, output_dir, ydl_options, fileext=None):
     # Download file to disk on server
     try:
-        with yt_dlp.YoutubeDL(ydl_options) as dl:
-            info = dl.extract_info(video_url, download=True)
+        info = download(video_url, ydl_options)
     except yt_dlp.DownloadError as e:
-        raise e
+        raise HTTPException(status_code=404, detail=f"Error downloading {video_url}. Video not found or other downloading error")
 
     # Send file from server to client
     video_id = info["id"]
@@ -119,8 +121,8 @@ def _download_and_send_to_client(video_url, output_dir, ydl_options, fileext=Non
     return FileResponse(filepath, filename=filename)
 
 
-@app.get("/url/audio/{video_url:path}", summary="get the download url for the audio from a youtube video")
-async def download_url_audio(video_url: str, request: Request) -> str:
+@app.post("/url/audio/", summary="get the download url for the audio from a youtube video")
+async def url_audio(video: Video, request: Request) -> DownloadLink:
     """
     Get the download url for the audio from a youtube video.
     """
@@ -128,11 +130,11 @@ async def download_url_audio(video_url: str, request: Request) -> str:
         'format': 'bestaudio/best',
         "noplaylist": True,
     }
-    return _get_download_url(video_url, ydl_opts)
+    return _get_download_url_and_send_to_client(video.url, ydl_opts)
 
 
-@app.get("/url/video/{video_url:path}", summary="get the download url for a youtube video")
-async def download_url_video(video_url: str, request: Request) -> str:
+@app.post("/url/video/", summary="get the download url for a youtube video")
+async def url_video(video: Video, request: Request) -> DownloadLink:
     """
     Get the download url for a youtube video.
     """
@@ -140,14 +142,20 @@ async def download_url_video(video_url: str, request: Request) -> str:
         'format': '(bestvideo[width>=1920]/bestvideo)+bestaudio/best',
         "noplaylist": True,
     }
-    return _get_download_url(video_url, ydl_opts)
+    return _get_download_url_and_send_to_client(video.url, ydl_opts)
 
 
-def _get_download_url(video_url, ydl_options):
-    with yt_dlp.YoutubeDL(ydl_options) as ydl:
-        info = ydl.extract_info(video_url, download=False)
+def _get_download_url_and_send_to_client(video_url, ydl_options):
+    try:
+        url = get_download_url(video_url, ydl_options)
+        logger.debug(f"extracted url from video \"{video_url}\": \"{url}\"")
+    except yt_dlp.DownloadError:
+        raise HTTPException(status_code=404, detail=f"No video found: {video_url}")
+    except ValueError:
+        raise HTTPException(status_code=404, detail=f"No download url found for video \"{video_url}\"")
+    return DownloadLink(url=url)
 
-    # Send download url to client
-    url = info.get("url", "None")
-    logger.debug(f"extracted url from video \"{video_url}\": \"{url}\"")
-    return url
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=8000)
