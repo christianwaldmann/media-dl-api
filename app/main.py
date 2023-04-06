@@ -36,7 +36,7 @@ async def log_requests(request: Request, call_next):
     Log every request to an endpoint
     """
     request_id = str(uuid.uuid4())[:8]
-    logger.info(f"rid={request_id}, start request, path=\"{request.url.path}\"")
+    logger.info(f"rid={request_id}, start request, path=\"{request.url.path}\", ip_address=\"{request.client.host}\"")
     start_time = time.time()
 
     response = await call_next(request)
