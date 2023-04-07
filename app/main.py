@@ -5,6 +5,8 @@ import yt_dlp
 import logging
 import time
 import uuid
+from fastapi.middleware.cors import CORSMiddleware
+
 from app.DownloadLink import DownloadLink
 from app.Video import Video
 from app.download import download, get_download_url
@@ -27,6 +29,18 @@ app = FastAPI(
     title="Youtube Download API",
     description="",
     version="0.0.1"
+)
+
+
+origins = [
+    "http://localhost",
+    "http://localhost:3000",
+]
+
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=origins,
 )
 
 
