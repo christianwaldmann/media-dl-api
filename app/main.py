@@ -43,7 +43,8 @@ app.add_middleware(
     allow_origins=origins,
     allow_credentials=True,
     allow_methods=["*"],
-    allow_headers=["*"]
+    allow_headers=["*"],
+    expose_headers=["Content-Disposition", "Content-Length"]
 )
 
 
@@ -135,7 +136,7 @@ def _download_and_send_to_client(video_url, output_dir, ydl_options, fileext=Non
         filename = f"{video_id}.{video_ext}"
     filepath = f"{output_dir}/{filename}"
     logger.debug(f"downloaded video \"{video_url}\"")
-    return FileResponse(filepath, filename=filename)
+    return FileResponse(filepath, filename=filename, media_type="application/octet-stream")
 
 
 @app.post("/url/audio/", summary="get the download url for the audio from a youtube video")
