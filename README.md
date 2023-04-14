@@ -12,7 +12,6 @@
 
 - Endpoints to download videos or a video's audio
 - Easy to use
-- Downloaded files get automatically deleted on the server after each request 
 
 
 ## Setup
@@ -20,22 +19,48 @@
 The easiest way to get it up and running is via docker-compose:
 
 ````yaml
-version: "3.8"
-
 services:
     api:
-        image: ghcr.io/christianwaldmann/media-dl-api:latest
+        build: ghcr.io/christianwaldmann/media-dl-api:latest
         ports:
             - 8000:8000
         command: uvicorn app.main:app --host 0.0.0.0
         restart: always
+        volumes:
+            - temp-download-dir:/tmp
+        environment:
+            - CELERY_BROKER_URL=redis://redis:6379/0
+            - CELERY_RESULT_BACKEND=redis://redis:6379/0
+        depends_on:
+            -   redis
+
+    worker:
+        build: ghcr.io/christianwaldmann/media-dl-api:latest
+        command: celery --app=app.worker.celery worker --loglevel=info
+        restart: always
+        volumes:
+            - temp-download-dir:/tmp
+        environment:
+            - CELERY_BROKER_URL=redis://redis:6379/0
+            - CELERY_RESULT_BACKEND=redis://redis:6379/0
+        depends_on:
+            - api
+            - redis
+
+    redis:
+        image: redis:6-alpine
+        restart: always
+
+volumes:
+    temp-download-dir:
+
 ````
 
 ## Usage
 
 For a more detailed API documentation visit [http://localhost:8000/docs](http://localhost:8000/docs).
 
-#### Download a video: `POST /download/video`
+#### Start task to download video: `POST /download/video`
 
 ````
 curl -X POST http://localhost:8000/download/video/ -H "Content-Type: application/json" -d '{"url": "https://www.youtube.com/watch?v=dQw4w9WgXcQ"}' -O -J

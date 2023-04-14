@@ -1,34 +1,26 @@
-from fastapi import FastAPI, Depends, Request, HTTPException
+import shutil
+from pathlib import Path
+from celery.result import AsyncResult
+from fastapi import FastAPI, Depends, Request, HTTPException, status
 from fastapi.responses import FileResponse
-from tempfile import TemporaryDirectory
-import yt_dlp
-import logging
+from tempfile import mkdtemp
 import time
 import uuid
 from fastapi.middleware.cors import CORSMiddleware
+from starlette.background import BackgroundTask
 
-from app.DownloadLink import DownloadLink
-from app.Video import Video
-from app.download import download, get_download_url
+from app.logger import get_logger
+from app.models.Task import Task, TaskOut
+from app.models.Video import Video
+from app.worker import download_task
 
 
-logger = logging.getLogger(__name__)
-logger.setLevel(logging.DEBUG)
-formatter = logging.Formatter('%(asctime)s:%(name)s:%(message)s')
-file_handler = logging.FileHandler('log.log')
-file_handler.setFormatter(formatter)
-file_handler.setLevel(logging.DEBUG)
-logger.addHandler(file_handler)
-
-stream_handler = logging.StreamHandler()
-stream_handler.setFormatter(formatter)
-logger.addHandler(stream_handler)
+logger = get_logger(__name__)
 
 
 app = FastAPI(
-    title="Youtube Download API",
+    title="media-dl-api",
     description="",
-    version="0.0.1"
 )
 
 
@@ -66,19 +58,19 @@ async def log_requests(request: Request, call_next):
 
 
 async def get_temp_dir():
-    tempdir = TemporaryDirectory()
-    try:
-        yield tempdir.name
-    finally:
-        tempdir.cleanup()
+    yield mkdtemp()
 
 
-@app.post("/download/audio/", summary="download audio from a youtube video")
-async def download_audio(video: Video, request: Request, tempdirname: str = Depends(get_temp_dir)) -> FileResponse:
+def remove_temp_dir(temp_dir):
+    shutil.rmtree(temp_dir)
+
+
+@app.post("/download/audio/", summary="start task to download audio from video", status_code=status.HTTP_202_ACCEPTED)
+async def download_audio(video: Video, tempdirname: str = Depends(get_temp_dir)) -> Task:
     """
-    Download audio from a youtube video.
+    Start task to download audio from a video.
 
-    This will download the audio on the server temporarily to disk and then send it to the client.
+    This will download the audio on the server to disk.
     """
     ydl_opts = {
         "writethumbnail": True,
@@ -100,15 +92,16 @@ async def download_audio(video: Video, request: Request, tempdirname: str = Depe
             }
         ],
     }
-    return _download_and_send_to_client(video.url, tempdirname, ydl_opts, fileext="mp3")
+    task = download_task.delay(video.url, tempdirname, ydl_opts, fileext="mp3")
+    return Task(id=task.id)
 
 
-@app.post("/download/video/", summary="download youtube video")
-async def download_video(video: Video, request: Request, tempdirname: str = Depends(get_temp_dir)) -> FileResponse:
+@app.post("/download/video/", summary="start task to download video", status_code=status.HTTP_202_ACCEPTED)
+async def download_video(video: Video, tempdirname: str = Depends(get_temp_dir)) -> Task:
     """
-    Download youtube video.
+    Start task to download video.
 
-    This will download the video on the server temporarily to disk and then send it to the client.
+    This will download the video on the server to disk.
     """
     ydl_opts = {
         "writethumbnail": True,
@@ -117,61 +110,68 @@ async def download_video(video: Video, request: Request, tempdirname: str = Depe
         "noplaylist": True,
         "prefer_ffmpeg": True,
     }
-    return _download_and_send_to_client(video.url, tempdirname, ydl_opts)
+    task = download_task.delay(video.url, tempdirname, ydl_opts)
+    return Task(id=task.id)
 
 
-def _download_and_send_to_client(video_url, output_dir, ydl_options, fileext=None):
-    # Download file to disk on server
-    try:
-        info = download(video_url, ydl_options)
-    except yt_dlp.DownloadError as e:
-        raise HTTPException(status_code=404, detail=f"Error downloading {video_url}. Video not found or other downloading error")
+@app.get("/task/{task_id}/status", summary="get status information about a task")
+async def get_status(task_id: str) -> TaskOut:
+    """
+    Get status information about a task.
+    """
+    result = AsyncResult(task_id)
 
-    # Send file from server to client
-    video_id = info["id"]
-    if fileext:
-        filename = f"{video_id}.{fileext}"
+    # Get downloaded and total bytes
+    if result.state == "PROGRESS" or result.state == "SUCCESS":
+        done = result.info.get("done", 0)
+        total = result.info.get("total", 1)
     else:
-        video_ext = info["ext"]
-        filename = f"{video_id}.{video_ext}"
-    filepath = f"{output_dir}/{filename}"
-    logger.debug(f"downloaded video \"{video_url}\"")
-    return FileResponse(filepath, filename=filename, media_type="application/octet-stream")
+        done = 0
+        total = 0
+
+    return TaskOut(
+        id=result.task_id,
+        status=result.status,
+        done=done,
+        total=total,
+    )
 
 
-@app.post("/url/audio/", summary="get the download url for the audio from a youtube video")
-async def url_audio(video: Video, request: Request) -> DownloadLink:
+@app.get("/task/{task_id}/file", summary="download the video/audio file from the server")
+async def get_file(task_id: str) -> FileResponse:
     """
-    Get the download url for the audio from a youtube video.
+    Download the video/audio file from the server. Only available after the task finished successfully.
+
+    This will delete the file on the server afterward.
     """
-    ydl_opts = {
-        'format': 'bestaudio/best',
-        "noplaylist": True,
-    }
-    return _get_download_url_and_send_to_client(video.url, ydl_opts)
+    task_result = AsyncResult(task_id)
+    meta = task_result.result
 
+    # Check that task is not currently running
+    if task_result.state == "PROGRESS":
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Task with id {task_id} is currently in progress and didn't finish yet")
 
-@app.post("/url/video/", summary="get the download url for a youtube video")
-async def url_video(video: Video, request: Request) -> DownloadLink:
-    """
-    Get the download url for a youtube video.
-    """
-    ydl_opts = {
-        'format': '(bestvideo[width>=1920]/bestvideo)+bestaudio/best',
-        "noplaylist": True,
-    }
-    return _get_download_url_and_send_to_client(video.url, ydl_opts)
+    # Check that task is finished
+    if not task_result.ready():
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Task with id {task_id} doesn't exist")
 
+    # Check that task finished successfully
+    if task_result.status != "SUCCESS":
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Task with id {task_id} exited with status {task_result.status}")
 
-def _get_download_url_and_send_to_client(video_url, ydl_options):
-    try:
-        url = get_download_url(video_url, ydl_options)
-        logger.debug(f"extracted url from video \"{video_url}\": \"{url}\"")
-    except yt_dlp.DownloadError:
-        raise HTTPException(status_code=404, detail=f"No video found: {video_url}")
-    except ValueError:
-        raise HTTPException(status_code=404, detail=f"No download url found for video \"{video_url}\"")
-    return DownloadLink(url=url)
+    # Check that file still exists
+    if not Path(meta["filepath"]).exists():
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"File \"{meta['filepath']}\" not found. Most likely there was already an earlier request wgich deleted the file.")
+
+    # Send file to client and delete it on the server afterward
+    temp_dir = Path(meta["filepath"]).parent
+    return FileResponse(
+        meta["filepath"],
+        filename=meta["filename"],
+        media_type="application/octet-stream",
+        background=BackgroundTask(remove_temp_dir, temp_dir),
+    )
+    # TODO: right now files get only deleted after their first request -> if there is never any request, they dont get deleted --> idea: periodic cleanup
 
 
 if __name__ == "__main__":

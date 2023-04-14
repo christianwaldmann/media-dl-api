@@ -6,3 +6,28 @@ services:
         ports:
             - 8000:8000
         command: uvicorn app.main:app --host 0.0.0.0
+        volumes:
+            - temp-download-dir:/tmp
+        environment:
+            - CELERY_BROKER_URL=redis://redis:6379/0
+            - CELERY_RESULT_BACKEND=redis://redis:6379/0
+        depends_on:
+            -   redis
+
+    worker:
+        build: .
+        command: celery --app=app.worker.celery worker --loglevel=info
+        volumes:
+            - temp-download-dir:/tmp
+        environment:
+            - CELERY_BROKER_URL=redis://redis:6379/0
+            - CELERY_RESULT_BACKEND=redis://redis:6379/0
+        depends_on:
+            - api
+            - redis
+
+    redis:
+        image: redis:6-alpine
+
+volumes:
+    temp-download-dir:

@@ -10,15 +10,10 @@ def download(video_url, ydl_options):
     return info
 
 
-def get_download_url(video_url, ydl_options):
-    """
-    Get download url
-    """
-    with yt_dlp.YoutubeDL(ydl_options) as ydl:
-        info = ydl.extract_info(video_url, download=False)
-
-    try:
-        url = info["url"]
-    except KeyError:
-        raise ValueError(f"No download url found for video \"{video_url}\"")
-    return url
+def download_hook(d, task_obj):
+    if d["status"] == "finished":
+        return
+    if d["status"] == "downloading":
+        downloaded_bytes = d["downloaded_bytes"]
+        total_bytes = d["total_bytes_estimate"]
+        task_obj.update_state(state="PROGRESS", meta={"done": downloaded_bytes, "total": total_bytes})
