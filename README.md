@@ -60,15 +60,26 @@ volumes:
 
 For a more detailed API documentation visit [http://localhost:8000/docs](http://localhost:8000/docs).
 
-#### Start task to download video: `POST /download/video`
+#### Start task to download video: `POST /download/video/`
 
 ````
-curl -X POST http://localhost:8000/download/video/ -H "Content-Type: application/json" -d '{"url": "https://www.youtube.com/watch?v=dQw4w9WgXcQ"}' -O -J
+curl -X POST http://localhost:8000/download/video/ -H "Content-Type: application/json" -d '{"url": "https://www.youtube.com/watch?v=dQw4w9WgXcQ"}'
 ````
 
-#### Download the audio of a video: `POST /download/audio`
+#### Start task to download the audio of a video: `POST /download/audio/`
 
 ````
-curl -X POST http://localhost:8000/download/audio/ -H "Content-Type: application/json" -d '{"url": "https://www.youtube.com/watch?v=dQw4w9WgXcQ"}' -O -J
+curl -X POST http://localhost:8000/download/audio/ -H "Content-Type: application/json" -d '{"url": "https://www.youtube.com/watch?v=dQw4w9WgXcQ"}'
 ````
 
+#### Get task status: `GET /task/<task_id>/status/`
+
+````
+curl http://localhost:8000/task/<task_id>/status/
+````
+
+#### Download file: `GET /task/<task_id>/file/`
+
+````
+curl http://localhost:8000/task/<task_id>/file/ -O -J
+````
