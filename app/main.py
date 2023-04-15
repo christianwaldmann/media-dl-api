@@ -115,7 +115,7 @@ async def download_video(video: Video, tempdirname: str = Depends(get_temp_dir))
     return Task(id=task.id)
 
 
-@app.get("/task/{task_id}/status", summary="get status information about a task")
+@app.get("/task/{task_id}/status/", summary="get status information about a task")
 async def get_status(task_id: str) -> TaskOut:
     """
     Get status information about a task.
@@ -138,7 +138,7 @@ async def get_status(task_id: str) -> TaskOut:
     )
 
 
-@app.get("/task/{task_id}/file", summary="download the video/audio file from the server")
+@app.get("/task/{task_id}/file/", summary="download the video/audio file from the server")
 async def get_file(task_id: str) -> FileResponse:
     """
     Download the video/audio file from the server. Only available after the task finished successfully.
